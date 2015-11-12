@@ -1,7 +1,13 @@
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.net.URI;
 import java.util.BitSet;
 import java.util.HashSet;
 
@@ -16,7 +22,8 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class FeatureVectorLsh {
 	public static final int KNN = 2;
-	public static final int	VECTOR_LENGTH	= 1000;
+	public static final int			VECTOR_LENGTH	= 4000;
+	public static HashSet<BitSet>	usedHashes		= new HashSet<BitSet>();
 
 	public static class TokenizerMapper extends Mapper<Object, Text, Text, Text> {
 
@@ -35,72 +42,60 @@ public class FeatureVectorLsh {
 	}
 
 	public static class MyReducer extends Reducer<Text, Text, Text, Text> {
+		private BitSet		searchSignature;
+		private BitSet[]	hashFunction;
+		@Override
+		protected void setup(Reducer<Text, Text, Text, Text>.Context context) throws IOException, InterruptedException {
+			// TODO Auto-generated method stub
+			super.setup(context);
+			Configuration conf = context.getConfiguration();
+			URI[] uriList = Job.getInstance(conf).getCacheFiles();
+			Path filePath = new Path(uriList[0].getPath());
+			String configFileName = filePath.getName().toString();
+			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
+			try {
+				this.searchSignature = (BitSet) ois.readObject();
+				this.hashFunction = (BitSet[]) ois.readObject();
+			}
+			catch (ClassNotFoundException e) {
+				throw new IOException("Config file mismatch!");
+			}
+			ois.close();
+		}
 
 		public void reduce(Text key, Iterable<Text> values, Context context)
 				throws IOException, InterruptedException {
-			Configuration conf = context.getConfiguration();
-			String[] hashVector = conf.get("hashVector").split(",");
-			boolean searchPositive = conf.getBoolean("searchPositive",true);
 			
 			for(Text val : values){
-				String[] mappedVector = val.toString().split(",");
-				double dot_product=vectorDot(hashVector,mappedVector);
-				
-				if((dot_product >= 0)==searchPositive)
+				double[] mappedVector = parseDoubleArr(val.toString().split(","));
+				boolean matched = true;
+				for (int i = 0; i < hashFunction.length; i++) {
+					if (isSameDirection(mappedVector, hashFunction[i]) != searchSignature.get(i)) {
+						// Differ from the search signature, can already ignore
+						// this mappedVector
+						matched = false;
+						break;
+					}
+				}
+				if (matched) {
+					// Write the context if the signature of the value is same
+					// as
+					// the search signature
 					context.write(key, val);
+				}
 			}
 		}
 	}
 
-	public static void main(String[] args) throws Exception {
-		long number_of_neighbours = Long.MAX_VALUE;
-		// do{
-		Configuration conf = new Configuration();
-		StringBuilder hashVector = generateRandomHash();
-		conf.set("hashVector", hashVector.toString());
-		boolean searchPositive = hashSearch(hashVector,args[2]);
-		conf.setBoolean("searchPositive", searchPositive);
-		Job job = Job.getInstance(conf);
-		job.setJarByClass(FeatureVectorLsh.class);
-		job.setMapperClass(TokenizerMapper.class);
-		job.setReducerClass(MyReducer.class);
-		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(Text.class);
-		FileInputFormat.addInputPath(job, new Path(args[0]));
-		FileOutputFormat.setOutputPath(job, new Path(args[1]));
-		if(job.waitForCompletion(true) ){
-			number_of_neighbours = job.getCounters().findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
-		}else{
-			System.exit(1);
-		}
-		// }while(number_of_neighbours > KNN);
-	}
-
-	private static StringBuilder generateRandomHash() {
-		StringBuilder hashVector = new StringBuilder();
-		for (int i = 1; i < VECTOR_LENGTH; i++) {
-			hashVector.append((Math.random() > 0.5)? 1 : -1 ).append(",");
-		}
-		hashVector.append((Math.random() > 0.5)? 1 : -1);
-		return hashVector;
-	}
-
-	private static boolean hashSearch(StringBuilder hashVector, String fileName) throws IOException {
-		String[] hashArr = hashVector.toString().split(",");
-		File file = new File(fileName);
-		BufferedReader br = new BufferedReader(new FileReader(file));		
-		String[] searchVector = br.readLine().split(","); 
-		br.close();
-		double dot_product = vectorDot(hashArr, searchVector);
-		return (dot_product >= 0);
-	}
-
-	private static double vectorDot(String[] hashArr, String[] searchVector) {
-		double dot_product=0;
-		for(int i = 0;i<searchVector.length;i++){
-			dot_product += Double.parseDouble(hashArr[i])*Double.parseDouble(searchVector[i]);
-		}
-		return dot_product;
+	private static File createConfigFile(BitSet[] hashFunction, BitSet searchSignature)
+			throws IOException, FileNotFoundException {
+		File configFile = File.createTempFile("searchConfig", ".tmp");
+		configFile.deleteOnExit();
+		ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(configFile));
+		oos.writeObject(searchSignature);
+		oos.writeObject(hashFunction);
+		oos.close();
+		return configFile;
 	}
 
 	private static BitSet[] generateRandomHash(HashSet<BitSet> generatedHistory, int numOfNewHash) {
@@ -176,5 +171,38 @@ public class FeatureVectorLsh {
 			parsedArr[i] = Double.parseDouble(strArr[i]);
 		}
 		return parsedArr;
+	}
+
+	public static void main(String[] args) throws Exception {
+		long number_of_neighbours = Long.MAX_VALUE;
+		if (args.length < 3) {
+			System.err.println("Usage : hadoop jar lsh.jar FeatureVectorLsh input output searchVectorFile");
+			System.exit(1);
+		}
+		BufferedReader br = new BufferedReader(new FileReader(args[2]));
+		String searchTerm = br.readLine();
+		double[] searchVector = parseDoubleArr(searchTerm.split(","));
+		BitSet[] hashFunction = generateRandomHash(usedHashes, 10);
+		BitSet searchSignature = calculateHash(searchVector, hashFunction);
+		File configFile = createConfigFile(hashFunction, searchSignature);
+	
+		// do{
+		Configuration conf = new Configuration();
+		Job job = Job.getInstance(conf);
+		job.addCacheFile(configFile.toURI());
+		job.setJarByClass(FeatureVectorLsh.class);
+		job.setMapperClass(TokenizerMapper.class);
+		job.setReducerClass(MyReducer.class);
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(Text.class);
+		FileInputFormat.addInputPath(job, new Path(args[0]));
+		FileOutputFormat.setOutputPath(job, new Path(args[1]));
+		if(job.waitForCompletion(true) ){
+			System.out.println(searchSignature.toString());
+			number_of_neighbours = job.getCounters().findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
+		}else{
+			System.exit(1);
+		}
+		// }while(number_of_neighbours > KNN);
 	}
 }
