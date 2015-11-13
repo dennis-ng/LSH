@@ -30,22 +30,12 @@ public class FeatureVectorLsh {
 		private Text						classification	= new Text();
 		private Text vector = new Text();
 
-		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-			String entry = value.toString();
-			int vectStart = entry.indexOf("\t");
-			String className = entry.substring(0,vectStart);
-			String vect = entry.substring(vectStart+1);
-			classification.set(className);
-			vector.set(vect);
-			context.write(classification, vector);
-		}
-	}
-
-	public static class MyReducer extends Reducer<Text, Text, Text, Text> {
 		private BitSet		searchSketch;
 		private BitSet[]	hashFunction;
+
 		@Override
-		protected void setup(Reducer<Text, Text, Text, Text>.Context context) throws IOException, InterruptedException {
+		protected void setup(Mapper<Object, Text, Text, Text>.Context context)
+				throws IOException, InterruptedException {
 			// TODO Auto-generated method stub
 			super.setup(context);
 			Configuration conf = context.getConfiguration();
@@ -63,26 +53,39 @@ public class FeatureVectorLsh {
 			ois.close();
 		}
 
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+			String entry = value.toString();
+			int vectStart = entry.indexOf("\t");
+			String className = entry.substring(0,vectStart);
+			String vect = entry.substring(vectStart+1);
+			classification.set(className);
+
+			double[] mappedVector = parseDoubleArr(vect.split(","));
+			boolean matched = true;
+			for (int i = 0; i < hashFunction.length; i++) {
+				if (isSameDirection(mappedVector, hashFunction[i]) != searchSketch.get(i)) {
+					// Differ from the search sketch, can already ignore
+					// this mappedVector
+					matched = false;
+					break;
+				}
+			}
+			if (matched) {
+				// Write the context if the sketch of the value is same
+				// as
+				// the search sketch
+				vector.set(vect);
+				context.write(classification, vector);
+			}
+		}
+	}
+
+	public static class MyReducer extends Reducer<Text, Text, Text, Text> {
 		public void reduce(Text key, Iterable<Text> values, Context context)
 				throws IOException, InterruptedException {
 			
 			for(Text val : values){
-				double[] mappedVector = parseDoubleArr(val.toString().split(","));
-				boolean matched = true;
-				for (int i = 0; i < hashFunction.length; i++) {
-					if (isSameDirection(mappedVector, hashFunction[i]) != searchSketch.get(i)) {
-						// Differ from the search sketch, can already ignore
-						// this mappedVector
-						matched = false;
-						break;
-					}
-				}
-				if (matched) {
-					// Write the context if the sketch of the value is same
-					// as
-					// the search sketch
 					context.write(key, val);
-				}
 			}
 		}
 	}
