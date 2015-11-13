@@ -42,7 +42,7 @@ public class FeatureVectorLsh {
 	}
 
 	public static class MyReducer extends Reducer<Text, Text, Text, Text> {
-		private BitSet		searchSignature;
+		private BitSet		searchSketch;
 		private BitSet[]	hashFunction;
 		@Override
 		protected void setup(Reducer<Text, Text, Text, Text>.Context context) throws IOException, InterruptedException {
@@ -54,7 +54,7 @@ public class FeatureVectorLsh {
 			String configFileName = filePath.getName().toString();
 			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
 			try {
-				this.searchSignature = (BitSet) ois.readObject();
+				this.searchSketch = (BitSet) ois.readObject();
 				this.hashFunction = (BitSet[]) ois.readObject();
 			}
 			catch (ClassNotFoundException e) {
@@ -70,29 +70,29 @@ public class FeatureVectorLsh {
 				double[] mappedVector = parseDoubleArr(val.toString().split(","));
 				boolean matched = true;
 				for (int i = 0; i < hashFunction.length; i++) {
-					if (isSameDirection(mappedVector, hashFunction[i]) != searchSignature.get(i)) {
-						// Differ from the search signature, can already ignore
+					if (isSameDirection(mappedVector, hashFunction[i]) != searchSketch.get(i)) {
+						// Differ from the search sketch, can already ignore
 						// this mappedVector
 						matched = false;
 						break;
 					}
 				}
 				if (matched) {
-					// Write the context if the signature of the value is same
+					// Write the context if the sketch of the value is same
 					// as
-					// the search signature
+					// the search sketch
 					context.write(key, val);
 				}
 			}
 		}
 	}
 
-	private static File createConfigFile(BitSet[] hashFunction, BitSet searchSignature)
+	private static File createConfigFile(BitSet[] hashFunction, BitSet searchSketch)
 			throws IOException, FileNotFoundException {
 		File configFile = File.createTempFile("searchConfig", ".tmp");
 		configFile.deleteOnExit();
 		ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(configFile));
-		oos.writeObject(searchSignature);
+		oos.writeObject(searchSketch);
 		oos.writeObject(hashFunction);
 		oos.close();
 		return configFile;
@@ -117,26 +117,26 @@ public class FeatureVectorLsh {
 	}
 
 	/**
-	 * Calculates the LSH signature of a given vector using the given hash
+	 * Calculates the LSH sketch of a given vector using the given hash
 	 * function. This LSH uses the random project method.
 	 * 
 	 * @param vect
 	 *            The vector to hash.
 	 * @param hashFunction
 	 *            An array containing normal vectors of random hyperplanes.
-	 * @return The signature of the vector with the same length as hashFunction.
+	 * @return The sketch of the vector with the same length as hashFunction.
 	 */
 	private static BitSet calculateHash(double[] vect,BitSet[] hashFunction) {
-		BitSet signature = new BitSet(hashFunction.length);
+		BitSet sketch = new BitSet(hashFunction.length);
 		double dot_product = 0;
 		for (int i =0;i<hashFunction.length;i++) {
-			// The signature contains a set bit(1) if the vector is pointing
+			// The sketch contains a set bit(1) if the vector is pointing
 			// in the same direction as the normal vector(positive space)
 			// and a 0 bit otherwise.
 			if (isSameDirection(vect, hashFunction[i]))
-				signature.set(i);
+				sketch.set(i);
 		}
-		return signature;
+		return sketch;
 	}
 
 	/**
@@ -183,8 +183,8 @@ public class FeatureVectorLsh {
 		String searchTerm = br.readLine();
 		double[] searchVector = parseDoubleArr(searchTerm.split(","));
 		BitSet[] hashFunction = generateRandomHash(usedHashes, 10);
-		BitSet searchSignature = calculateHash(searchVector, hashFunction);
-		File configFile = createConfigFile(hashFunction, searchSignature);
+		BitSet searchSketch = calculateHash(searchVector, hashFunction);
+		File configFile = createConfigFile(hashFunction, searchSketch);
 	
 		// do{
 		Configuration conf = new Configuration();
@@ -198,7 +198,7 @@ public class FeatureVectorLsh {
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
 		if(job.waitForCompletion(true) ){
-			System.out.println(searchSignature.toString());
+			System.out.println(searchSketch.toString());
 			number_of_neighbours = job.getCounters().findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
 		}else{
 			System.exit(1);
