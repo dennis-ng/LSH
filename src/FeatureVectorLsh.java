@@ -1,11 +1,17 @@
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.ObjectInput;
 import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
 import java.io.ObjectOutputStream;
 import java.net.URI;
 import java.util.BitSet;
@@ -14,6 +20,8 @@ import java.util.HashSet;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
@@ -21,22 +29,62 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class FeatureVectorLsh {
-	public static final int KNN = 2;
+	public static final int			KNN				= 2;
 	public static final int			VECTOR_LENGTH	= 4000;
 	public static HashSet<BitSet>	usedHashes		= new HashSet<BitSet>();
 
-	public static class TokenizerMapper extends Mapper<Object, Text, Text, Text> {
+	public static class TokenizerMapper extends Mapper<Object, Text, BitSetWritable, Text> {
 
-		private Text						classification	= new Text();
-		private Text vector = new Text();
+		private Text		classification	= new Text();
+		private Text		vector			= new Text();
 
-		private BitSet		searchSketch;
 		private BitSet[]	hashFunction;
 
 		@Override
-		protected void setup(Mapper<Object, Text, Text, Text>.Context context)
+		protected void setup(Mapper<Object, Text, BitSetWritable, Text>.Context context)
 				throws IOException, InterruptedException {
-			// TODO Auto-generated method stub
+			super.setup(context);
+			Configuration conf = context.getConfiguration();
+			URI[] uriList = Job.getInstance(conf).getCacheFiles();
+			Path filePath = new Path(uriList[0].getPath());
+			String configFileName = filePath.getName().toString();
+			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
+			try {
+				// this.searchSketch = (BitSet) ois.readObject(); // Skipped
+				ois.readObject();
+				this.hashFunction = (BitSet[]) ois.readObject();
+			}
+			catch (ClassNotFoundException e) {
+				ois.close();
+				throw new IOException("Config file mismatch!");
+			}
+			finally {
+				ois.close();
+			}
+		}
+
+		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+			String entry = value.toString();
+			int vectStart = entry.indexOf("\t");
+			String className = entry.substring(0, vectStart);
+			String vect = entry.substring(vectStart + 1);
+			classification.set(className);
+
+			double[] inputVector = parseDoubleArr(vect.split(","));
+			BitSet inputSketch = calculateHash(inputVector, hashFunction);
+			BitSetWritable writableSketch = new BitSetWritable();
+			writableSketch.set(inputSketch);
+			vector.set(vect);
+			context.write(writableSketch, vector);
+		}
+	}
+
+	public static class MyReducer extends Reducer<BitSetWritable, Text, BitSetWritable, Text> {
+		private BitSet searchSketch;
+
+		@Override
+		protected void setup(Reducer<BitSetWritable, Text, BitSetWritable, Text>.Context context)
+				throws IOException, InterruptedException {
 			super.setup(context);
 			Configuration conf = context.getConfiguration();
 			URI[] uriList = Job.getInstance(conf).getCacheFiles();
@@ -45,48 +93,83 @@ public class FeatureVectorLsh {
 			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
 			try {
 				this.searchSketch = (BitSet) ois.readObject();
-				this.hashFunction = (BitSet[]) ois.readObject();
 			}
 			catch (ClassNotFoundException e) {
+				ois.close();
 				throw new IOException("Config file mismatch!");
 			}
-			ois.close();
+			finally {
+				ois.close();
+			}
 		}
 
-		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
-			String entry = value.toString();
-			int vectStart = entry.indexOf("\t");
-			String className = entry.substring(0,vectStart);
-			String vect = entry.substring(vectStart+1);
-			classification.set(className);
-
-			double[] mappedVector = parseDoubleArr(vect.split(","));
-			boolean matched = true;
-			for (int i = 0; i < hashFunction.length; i++) {
-				if (isSameDirection(mappedVector, hashFunction[i]) != searchSketch.get(i)) {
-					// Differ from the search sketch, can already ignore
-					// this mappedVector
-					matched = false;
-					break;
+		public void reduce(BitSetWritable key, Iterable<Text> values, Context context)
+				throws IOException, InterruptedException {
+			if (key.get().equals(searchSketch)) {
+				for (Text val : values) {
+					context.write(key, val);
 				}
-			}
-			if (matched) {
-				// Write the context if the sketch of the value is same
-				// as
-				// the search sketch
-				vector.set(vect);
-				context.write(classification, vector);
 			}
 		}
 	}
 
-	public static class MyReducer extends Reducer<Text, Text, Text, Text> {
-		public void reduce(Text key, Iterable<Text> values, Context context)
-				throws IOException, InterruptedException {
-			
-			for(Text val : values){
-					context.write(key, val);
+	public static class BitSetWritable
+			implements Comparable<BitSetWritable>, Writable, WritableComparable<BitSetWritable> {
+		private BitSet data;
+
+		public void set(BitSet toSet) {
+			this.data = toSet;
+		}
+
+		public BitSet get() {
+			return this.data;
+		}
+
+		@Override
+		public String toString() {
+			return data.toString();
+		}
+
+		@Override
+		public void readFields(DataInput dataInput) throws IOException {
+			int arrLen = dataInput.readInt();
+			byte[] byteDataArr = new byte[arrLen];
+			dataInput.readFully(byteDataArr);
+			ByteArrayInputStream bis = new ByteArrayInputStream(byteDataArr);
+			ObjectInput in = new ObjectInputStream(bis);
+			try {
+				data = (BitSet) in.readObject();
 			}
+			catch (ClassNotFoundException e) {
+				e.printStackTrace();
+			}
+			bis.close();
+			in.close();
+		}
+
+		@Override
+		public void write(DataOutput dataOutput) throws IOException {
+			ByteArrayOutputStream bos = new ByteArrayOutputStream();
+			ObjectOutput out = new ObjectOutputStream(bos);
+			out.writeObject(data);
+			byte[] byteDataArr = bos.toByteArray();
+			out.close();
+			bos.close();
+			dataOutput.writeInt(byteDataArr.length);
+			dataOutput.write(byteDataArr);
+		}
+
+		@Override
+		public int compareTo(BitSetWritable obj) {
+			BitSet rhs = ((BitSetWritable) obj).get();
+			if (data.equals(rhs))
+				return 0;
+			if (data.length() != rhs.length())
+				return data.length() > rhs.length() ? 1 : -1;
+			BitSet xor = (BitSet) data.clone();
+			xor.xor(rhs);
+			int firstDifferent = xor.length() - 1;
+			return data.get(firstDifferent) ? 1 : -1;
 		}
 	}
 
@@ -129,10 +212,10 @@ public class FeatureVectorLsh {
 	 *            An array containing normal vectors of random hyperplanes.
 	 * @return The sketch of the vector with the same length as hashFunction.
 	 */
-	private static BitSet calculateHash(double[] vect,BitSet[] hashFunction) {
+	private static BitSet calculateHash(double[] vect, BitSet[] hashFunction) {
 		BitSet sketch = new BitSet(hashFunction.length);
 		double dot_product = 0;
-		for (int i =0;i<hashFunction.length;i++) {
+		for (int i = 0; i < hashFunction.length; i++) {
 			// The sketch contains a set bit(1) if the vector is pointing
 			// in the same direction as the normal vector(positive space)
 			// and a 0 bit otherwise.
@@ -166,7 +249,7 @@ public class FeatureVectorLsh {
 		}
 		return dot_product >= 0;
 	}
-	
+
 	private static double[] parseDoubleArr(String[] strArr) {
 		int len = strArr.length;
 		double[] parsedArr = new double[len];
@@ -185,24 +268,28 @@ public class FeatureVectorLsh {
 		BufferedReader br = new BufferedReader(new FileReader(args[2]));
 		String searchTerm = br.readLine();
 		double[] searchVector = parseDoubleArr(searchTerm.split(","));
-		BitSet[] hashFunction = generateRandomHash(usedHashes, 10);
+		BitSet[] hashFunction = generateRandomHash(usedHashes, 15);
 		BitSet searchSketch = calculateHash(searchVector, hashFunction);
 		File configFile = createConfigFile(hashFunction, searchSketch);
-	
+
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf);
 		job.addCacheFile(configFile.toURI());
 		job.setJarByClass(FeatureVectorLsh.class);
 		job.setMapperClass(TokenizerMapper.class);
+		job.setMapOutputKeyClass(BitSetWritable.class);
+		job.setCombinerClass(MyReducer.class);
 		job.setReducerClass(MyReducer.class);
-		job.setOutputKeyClass(Text.class);
+		job.setOutputKeyClass(BitSetWritable.class);
 		job.setOutputValueClass(Text.class);
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
-		if(job.waitForCompletion(true) ){
+		if (job.waitForCompletion(true)) {
 			System.out.println(searchSketch.toString());
-			number_of_neighbours = job.getCounters().findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
-		}else{
+			number_of_neighbours = job.getCounters()
+					.findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
+		}
+		else {
 			System.exit(1);
 		}
 	}
