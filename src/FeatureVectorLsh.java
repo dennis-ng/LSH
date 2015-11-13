@@ -75,15 +75,17 @@ public class FeatureVectorLsh {
 			BitSetWritable writableSketch = new BitSetWritable();
 			writableSketch.set(inputSketch);
 			vector.set(vect);
-			context.write(writableSketch, vector);
+			context.write(writableSketch, value);
 		}
 	}
 
-	public static class MyReducer extends Reducer<BitSetWritable, Text, BitSetWritable, Text> {
-		private BitSet searchSketch;
+	public static class MyReducer extends Reducer<BitSetWritable, Text, Text, Text> {
+		private BitSet	searchSketch;
+		private Text	classification	= new Text();
+		private Text	vector			= new Text();
 
 		@Override
-		protected void setup(Reducer<BitSetWritable, Text, BitSetWritable, Text>.Context context)
+		protected void setup(Reducer<BitSetWritable, Text, Text, Text>.Context context)
 				throws IOException, InterruptedException {
 			super.setup(context);
 			Configuration conf = context.getConfiguration();
@@ -107,7 +109,13 @@ public class FeatureVectorLsh {
 				throws IOException, InterruptedException {
 			if (key.get().equals(searchSketch)) {
 				for (Text val : values) {
-					context.write(key, val);
+					String entry = val.toString();
+					int vectStart = entry.indexOf("\t");
+					String className = entry.substring(0, vectStart);
+					String vect = entry.substring(vectStart + 1);
+					classification.set(className);
+					vector.set(vect);
+					context.write(classification, vector);
 				}
 			}
 		}
@@ -278,9 +286,9 @@ public class FeatureVectorLsh {
 		job.setJarByClass(FeatureVectorLsh.class);
 		job.setMapperClass(TokenizerMapper.class);
 		job.setMapOutputKeyClass(BitSetWritable.class);
-		job.setCombinerClass(MyReducer.class);
+		// job.setCombinerClass(MyReducer.class);
 		job.setReducerClass(MyReducer.class);
-		job.setOutputKeyClass(BitSetWritable.class);
+		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(Text.class);
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
