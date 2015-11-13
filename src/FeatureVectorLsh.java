@@ -186,7 +186,6 @@ public class FeatureVectorLsh {
 		BitSet searchSketch = calculateHash(searchVector, hashFunction);
 		File configFile = createConfigFile(hashFunction, searchSketch);
 	
-		// do{
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf);
 		job.addCacheFile(configFile.toURI());
@@ -203,6 +202,5 @@ public class FeatureVectorLsh {
 		}else{
 			System.exit(1);
 		}
-		// }while(number_of_neighbours > KNN);
 	}
 }
