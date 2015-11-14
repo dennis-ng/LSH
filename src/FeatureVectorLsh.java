@@ -30,21 +30,21 @@ import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class FeatureVectorLsh {
-	public static final int			KNN				= 2;
-	public static final int			VECTOR_LENGTH	= 4000;
-	public static final int			SKETCH_LENGTH	= 15;
-	public static HashSet<BitSet>	usedHashes		= new HashSet<BitSet>();
-	public static double			threshold		= 0.5;					// from
-																			// -1
-																			// to
-																			// 1
+	public static final int KNN = 2;
+	public static final int VECTOR_LENGTH = 4000;
+	public static final int SKETCH_LENGTH = 50;
+	public static HashSet<BitSet> usedHashes = new HashSet<BitSet>();
+	public static double threshold = 0.9; // from
+											// -1
+											// to
+											// 1
 
 	public static class TokenizerMapper extends Mapper<Object, Text, BitSetWritable, Text> {
 
-		private Text		classification	= new Text();
-		private Text		vector			= new Text();
+		private Text classification = new Text();
+		private Text vector = new Text();
 
-		private BitSet[]	hashFunction;
+		private BitSet[] hashFunction;
 
 		@Override
 		protected void setup(Mapper<Object, Text, BitSetWritable, Text>.Context context)
@@ -59,12 +59,10 @@ public class FeatureVectorLsh {
 				// this.searchSketch = (BitSet) ois.readObject(); // Skipped
 				ois.readObject();
 				this.hashFunction = (BitSet[]) ois.readObject();
-			}
-			catch (ClassNotFoundException e) {
+			} catch (ClassNotFoundException e) {
 				ois.close();
 				throw new IOException("Config file mismatch!");
-			}
-			finally {
+			} finally {
 				ois.close();
 			}
 		}
@@ -81,14 +79,14 @@ public class FeatureVectorLsh {
 			BitSetWritable writableSketch = new BitSetWritable();
 			writableSketch.set(inputSketch);
 			vector.set(vect);
-			context.write(writableSketch, value);
+			context.write(writableSketch, classification);
 		}
 	}
 
 	public static class MyReducer extends Reducer<BitSetWritable, Text, DoubleWritable, Text> {
-		private BitSet	searchSketch;
-		private Text	classification	= new Text();
-		private Text	vector			= new Text();
+		private BitSet searchSketch;
+		private Text classification = new Text();
+		private Text vector = new Text();
 
 		@Override
 		protected void setup(Reducer<BitSetWritable, Text, DoubleWritable, Text>.Context context)
@@ -101,12 +99,50 @@ public class FeatureVectorLsh {
 			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
 			try {
 				this.searchSketch = (BitSet) ois.readObject();
-			}
-			catch (ClassNotFoundException e) {
+			} catch (ClassNotFoundException e) {
 				ois.close();
 				throw new IOException("Config file mismatch!");
+			} finally {
+				ois.close();
 			}
-			finally {
+		}
+		public void reduce(BitSetWritable key, Iterable<Text> values, Context context)
+				throws IOException, InterruptedException {
+			BitSet hammingMask = (BitSet) searchSketch.clone();
+			hammingMask.xor(key.get());
+			double hammingDist = hammingMask.cardinality();
+			// Similarity range from -1.0 to 1.0
+			double similarity = Math.cos((hammingDist / SKETCH_LENGTH) * Math.PI);
+			if (similarity >= threshold) {
+				DoubleWritable simScore = new DoubleWritable();
+				simScore.set(similarity);
+				for (Text val : values) {
+					context.write(simScore, val);
+				}
+			}
+		}
+	}
+
+	public static class MyCombiner extends Reducer<BitSetWritable, Text, BitSetWritable, Text> {
+		private BitSet searchSketch;
+		private Text classification = new Text();
+		private Text vector = new Text();
+
+		@Override
+		protected void setup(Reducer<BitSetWritable, Text, BitSetWritable, Text>.Context context)
+				throws IOException, InterruptedException {
+			super.setup(context);
+			Configuration conf = context.getConfiguration();
+			URI[] uriList = Job.getInstance(conf).getCacheFiles();
+			Path filePath = new Path(uriList[0].getPath());
+			String configFileName = filePath.getName().toString();
+			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
+			try {
+				this.searchSketch = (BitSet) ois.readObject();
+			} catch (ClassNotFoundException e) {
+				ois.close();
+				throw new IOException("Config file mismatch!");
+			} finally {
 				ois.close();
 			}
 		}
@@ -119,17 +155,8 @@ public class FeatureVectorLsh {
 			// Similarity range from -1.0 to 1.0
 			double similarity = Math.cos((hammingDist / SKETCH_LENGTH) * Math.PI);
 			if (similarity >= threshold) {
-				DoubleWritable simScore = new DoubleWritable();
-				simScore.set(similarity);
 				for (Text val : values) {
-					// String entry = val.toString();
-					// int vectStart = entry.indexOf("\t");
-					// String className = entry.substring(0, vectStart);
-					// String vect = entry.substring(vectStart + 1);
-					// classification.set(className);
-					// vector.set(vect);
-					// context.write(classification, vector);
-					context.write(simScore, val);
+					context.write(key, val);
 				}
 			}
 		}
@@ -161,8 +188,7 @@ public class FeatureVectorLsh {
 			ObjectInput in = new ObjectInputStream(bis);
 			try {
 				data = (BitSet) in.readObject();
-			}
-			catch (ClassNotFoundException e) {
+			} catch (ClassNotFoundException e) {
 				e.printStackTrace();
 			}
 			bis.close();
@@ -264,8 +290,7 @@ public class FeatureVectorLsh {
 		for (int b = 0; b < VECTOR_LENGTH; b++) {
 			if (normalVect.get(b)) {
 				dot_product += vect[b];
-			}
-			else {
+			} else {
 				dot_product -= vect[b];
 			}
 		}
@@ -300,7 +325,7 @@ public class FeatureVectorLsh {
 		job.setJarByClass(FeatureVectorLsh.class);
 		job.setMapperClass(TokenizerMapper.class);
 		job.setMapOutputKeyClass(BitSetWritable.class);
-		// job.setCombinerClass(MyReducer.class);
+		job.setCombinerClass(MyCombiner.class);
 		job.setReducerClass(MyReducer.class);
 		job.setOutputKeyClass(DoubleWritable.class);
 		job.setOutputValueClass(Text.class);
@@ -310,8 +335,7 @@ public class FeatureVectorLsh {
 			System.out.println(searchSketch.toString());
 			number_of_neighbours = job.getCounters()
 					.findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
-		}
-		else {
+		} else {
 			System.exit(1);
 		}
 	}
