@@ -19,6 +19,7 @@ import java.util.HashSet;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableComparable;
@@ -31,7 +32,12 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class FeatureVectorLsh {
 	public static final int			KNN				= 2;
 	public static final int			VECTOR_LENGTH	= 4000;
+	public static final int			SKETCH_LENGTH	= 15;
 	public static HashSet<BitSet>	usedHashes		= new HashSet<BitSet>();
+	public static double			threshold		= 0.5;					// from
+																			// -1
+																			// to
+																			// 1
 
 	public static class TokenizerMapper extends Mapper<Object, Text, BitSetWritable, Text> {
 
@@ -79,13 +85,13 @@ public class FeatureVectorLsh {
 		}
 	}
 
-	public static class MyReducer extends Reducer<BitSetWritable, Text, Text, Text> {
+	public static class MyReducer extends Reducer<BitSetWritable, Text, DoubleWritable, Text> {
 		private BitSet	searchSketch;
 		private Text	classification	= new Text();
 		private Text	vector			= new Text();
 
 		@Override
-		protected void setup(Reducer<BitSetWritable, Text, Text, Text>.Context context)
+		protected void setup(Reducer<BitSetWritable, Text, DoubleWritable, Text>.Context context)
 				throws IOException, InterruptedException {
 			super.setup(context);
 			Configuration conf = context.getConfiguration();
@@ -107,15 +113,23 @@ public class FeatureVectorLsh {
 
 		public void reduce(BitSetWritable key, Iterable<Text> values, Context context)
 				throws IOException, InterruptedException {
-			if (key.get().equals(searchSketch)) {
+			BitSet hammingMask = (BitSet) searchSketch.clone();
+			hammingMask.xor(key.get());
+			double hammingDist = hammingMask.cardinality();
+			// Similarity range from -1.0 to 1.0
+			double similarity = Math.cos((hammingDist / SKETCH_LENGTH) * Math.PI);
+			if (similarity >= threshold) {
+				DoubleWritable simScore = new DoubleWritable();
+				simScore.set(similarity);
 				for (Text val : values) {
-					String entry = val.toString();
-					int vectStart = entry.indexOf("\t");
-					String className = entry.substring(0, vectStart);
-					String vect = entry.substring(vectStart + 1);
-					classification.set(className);
-					vector.set(vect);
-					context.write(classification, vector);
+					// String entry = val.toString();
+					// int vectStart = entry.indexOf("\t");
+					// String className = entry.substring(0, vectStart);
+					// String vect = entry.substring(vectStart + 1);
+					// classification.set(className);
+					// vector.set(vect);
+					// context.write(classification, vector);
+					context.write(simScore, val);
 				}
 			}
 		}
@@ -276,7 +290,7 @@ public class FeatureVectorLsh {
 		BufferedReader br = new BufferedReader(new FileReader(args[2]));
 		String searchTerm = br.readLine();
 		double[] searchVector = parseDoubleArr(searchTerm.split(","));
-		BitSet[] hashFunction = generateRandomHash(usedHashes, 15);
+		BitSet[] hashFunction = generateRandomHash(usedHashes, SKETCH_LENGTH);
 		BitSet searchSketch = calculateHash(searchVector, hashFunction);
 		File configFile = createConfigFile(hashFunction, searchSketch);
 
@@ -288,7 +302,7 @@ public class FeatureVectorLsh {
 		job.setMapOutputKeyClass(BitSetWritable.class);
 		// job.setCombinerClass(MyReducer.class);
 		job.setReducerClass(MyReducer.class);
-		job.setOutputKeyClass(Text.class);
+		job.setOutputKeyClass(DoubleWritable.class);
 		job.setOutputValueClass(Text.class);
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
