@@ -29,22 +29,21 @@ import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
-public class FeatureVectorLsh {
-	public static final int KNN = 2;
-	public static final int VECTOR_LENGTH = 4000;
-	public static final int SKETCH_LENGTH = 50;
-	public static HashSet<BitSet> usedHashes = new HashSet<BitSet>();
-	public static double threshold = 0.9; // from
-											// -1
-											// to
-											// 1
+public class CosLsh {
+	public static final int			SKETCH_LENGTH	= 30;
+	public static HashSet<BitSet>	usedHashes		= new HashSet<BitSet>();
+	public static double			threshold		= 1;					// from
+																			// -1
+																			// to
+																			// 1
+	public static int				VECTOR_LENGTH;
 
 	public static class TokenizerMapper extends Mapper<Object, Text, BitSetWritable, Text> {
 
-		private Text classification = new Text();
-		private Text vector = new Text();
+		private Text		classification	= new Text();
+		private Text		vector			= new Text();
 
-		private BitSet[] hashFunction;
+		private BitSet[]	hashFunction;
 
 		@Override
 		protected void setup(Mapper<Object, Text, BitSetWritable, Text>.Context context)
@@ -59,10 +58,12 @@ public class FeatureVectorLsh {
 				// this.searchSketch = (BitSet) ois.readObject(); // Skipped
 				ois.readObject();
 				this.hashFunction = (BitSet[]) ois.readObject();
-			} catch (ClassNotFoundException e) {
+			}
+			catch (ClassNotFoundException e) {
 				ois.close();
 				throw new IOException("Config file mismatch!");
-			} finally {
+			}
+			finally {
 				ois.close();
 			}
 		}
@@ -84,9 +85,9 @@ public class FeatureVectorLsh {
 	}
 
 	public static class MyReducer extends Reducer<BitSetWritable, Text, DoubleWritable, Text> {
-		private BitSet searchSketch;
-		private Text classification = new Text();
-		private Text vector = new Text();
+		private BitSet	searchSketch;
+		private Text	classification	= new Text();
+		private Text	vector			= new Text();
 
 		@Override
 		protected void setup(Reducer<BitSetWritable, Text, DoubleWritable, Text>.Context context)
@@ -99,13 +100,16 @@ public class FeatureVectorLsh {
 			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
 			try {
 				this.searchSketch = (BitSet) ois.readObject();
-			} catch (ClassNotFoundException e) {
+			}
+			catch (ClassNotFoundException e) {
 				ois.close();
 				throw new IOException("Config file mismatch!");
-			} finally {
+			}
+			finally {
 				ois.close();
 			}
 		}
+
 		public void reduce(BitSetWritable key, Iterable<Text> values, Context context)
 				throws IOException, InterruptedException {
 			BitSet hammingMask = (BitSet) searchSketch.clone();
@@ -124,9 +128,9 @@ public class FeatureVectorLsh {
 	}
 
 	public static class MyCombiner extends Reducer<BitSetWritable, Text, BitSetWritable, Text> {
-		private BitSet searchSketch;
-		private Text classification = new Text();
-		private Text vector = new Text();
+		private BitSet	searchSketch;
+		private Text	classification	= new Text();
+		private Text	vector			= new Text();
 
 		@Override
 		protected void setup(Reducer<BitSetWritable, Text, BitSetWritable, Text>.Context context)
@@ -139,10 +143,12 @@ public class FeatureVectorLsh {
 			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
 			try {
 				this.searchSketch = (BitSet) ois.readObject();
-			} catch (ClassNotFoundException e) {
+			}
+			catch (ClassNotFoundException e) {
 				ois.close();
 				throw new IOException("Config file mismatch!");
-			} finally {
+			}
+			finally {
 				ois.close();
 			}
 		}
@@ -188,7 +194,8 @@ public class FeatureVectorLsh {
 			ObjectInput in = new ObjectInputStream(bis);
 			try {
 				data = (BitSet) in.readObject();
-			} catch (ClassNotFoundException e) {
+			}
+			catch (ClassNotFoundException e) {
 				e.printStackTrace();
 			}
 			bis.close();
@@ -290,7 +297,8 @@ public class FeatureVectorLsh {
 		for (int b = 0; b < VECTOR_LENGTH; b++) {
 			if (normalVect.get(b)) {
 				dot_product += vect[b];
-			} else {
+			}
+			else {
 				dot_product -= vect[b];
 			}
 		}
@@ -306,10 +314,11 @@ public class FeatureVectorLsh {
 		return parsedArr;
 	}
 
-	public static void main(String[] args) throws Exception {
+	public static void main(String[] args)
+			throws IllegalArgumentException, IOException, ClassNotFoundException, InterruptedException {
 		long number_of_neighbours = Long.MAX_VALUE;
 		if (args.length < 3) {
-			System.err.println("Usage : hadoop jar lsh.jar FeatureVectorLsh input output searchVectorFile");
+			System.err.println("Usage : hadoop jar lsh.jar CosLsh input output searchVectorFile");
 			System.exit(1);
 		}
 		BufferedReader br = new BufferedReader(new FileReader(args[2]));
@@ -318,11 +327,11 @@ public class FeatureVectorLsh {
 		BitSet[] hashFunction = generateRandomHash(usedHashes, SKETCH_LENGTH);
 		BitSet searchSketch = calculateHash(searchVector, hashFunction);
 		File configFile = createConfigFile(hashFunction, searchSketch);
-
+		VECTOR_LENGTH = searchVector.length;
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf);
 		job.addCacheFile(configFile.toURI());
-		job.setJarByClass(FeatureVectorLsh.class);
+		job.setJarByClass(CosLsh.class);
 		job.setMapperClass(TokenizerMapper.class);
 		job.setMapOutputKeyClass(BitSetWritable.class);
 		job.setCombinerClass(MyCombiner.class);
@@ -335,8 +344,10 @@ public class FeatureVectorLsh {
 			System.out.println(searchSketch.toString());
 			number_of_neighbours = job.getCounters()
 					.findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
-		} else {
+		}
+		else {
 			System.exit(1);
 		}
 	}
+
 }
