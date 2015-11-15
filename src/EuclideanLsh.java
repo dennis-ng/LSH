@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.URI;
-import java.util.Arrays;
 import java.util.HashSet;
 
 import org.apache.hadoop.conf.Configuration;
@@ -29,7 +28,6 @@ public class EuclideanLsh {
 
 		private int[]		searchSig;
 		private Text		classification	= new Text();
-		private Text		vector			= new Text();
 
 		private float[][]	hashFunction;
 
@@ -69,14 +67,6 @@ public class EuclideanLsh {
 			classification.set("" + classification);
 			context.write(classification, NullWritable.get());
 		}
-
-		// private int calculateHammingDist(int[] input, int[] search) {
-		// int dist = 0;
-		// for (int i = 0; i < input.length; i++)
-		// if (input[i] != search[i])
-		// dist++;
-		// return dist;
-		// }
 	}
 
 	public static class MyReducer extends Reducer<Text, NullWritable, Text, NullWritable> {
@@ -155,9 +145,9 @@ public class EuclideanLsh {
 
 	public static void main(String[] args)
 			throws IllegalArgumentException, IOException, ClassNotFoundException, InterruptedException {
-		long number_of_neighbours = Long.MAX_VALUE;
 		if (args.length < 3) {
-			System.err.println("Usage : hadoop jar lsh.jar EuclideanLsh input output searchVectorFile");
+			System.err.println(
+					"Usage : hadoop jar lsh.jar EuclideanLsh input output searchVectorFile [-s signature length] [-b bucket width]");
 			System.exit(1);
 		}
 		BufferedReader br = new BufferedReader(new FileReader(args[2]));
@@ -195,9 +185,7 @@ public class EuclideanLsh {
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
 		if (job.waitForCompletion(true)) {
-			System.out.println(Arrays.toString(searchSig));
-			number_of_neighbours = job.getCounters()
-					.findCounter("org.apache.hadoop.mapred.Task$Counter", "REDUCE_OUTPUT_RECORDS").getValue();
+			System.exit(0);
 		}
 		else {
 			System.exit(1);
