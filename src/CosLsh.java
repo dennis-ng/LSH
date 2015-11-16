@@ -75,7 +75,7 @@ public class CosLsh {
 			String vect = entry.substring(vectStart + 1);
 			classification.set(className);
 
-			double[] inputVector = parseDoubleArr(vect.split(","));
+			double[] inputVector = parseDoubleArr(vect.split("/"));
 			BitSet inputSketch = calculateHash(inputVector, hashFunction);
 			BitSetWritable writableSketch = new BitSetWritable();
 			writableSketch.set(inputSketch);

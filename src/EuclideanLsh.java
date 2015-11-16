@@ -61,7 +61,7 @@ public class EuclideanLsh {
 			String vect = entry.substring(vectStart + 1);
 			classification.set(className);
 
-			double[] inputVector = parseDoubleArr(vect.split(","));
+			double[] inputVector = parseDoubleArr(vect.split("/"));
 			for (int i = 0; i < hashFunction.length; i++) {
 				if (hashed(inputVector, hashFunction[i]) != searchSig[i]) { return; }
 			}
