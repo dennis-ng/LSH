@@ -53,6 +53,7 @@ public class EuclideanLsh {
 			}
 		}
 
+		@Override
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String entry = value.toString();
 			int vectStart = entry.indexOf("\t");
@@ -83,7 +84,7 @@ public class EuclideanLsh {
 		int len = strArr.length;
 		double[] parsedArr = new double[len];
 		for (int i = 0; i < len; i++) {
-			parsedArr[i] = Double.parseDouble(strArr[i]);
+			parsedArr[i] = Double.parseDouble(strArr[i].split(":")[1]);
 		}
 		return parsedArr;
 	}

@@ -309,7 +309,7 @@ public class CosLsh {
 		int len = strArr.length;
 		double[] parsedArr = new double[len];
 		for (int i = 0; i < len; i++) {
-			parsedArr[i] = Double.parseDouble(strArr[i]);
+			parsedArr[i] = Double.parseDouble(strArr[i].split(":")[1]);
 		}
 		return parsedArr;
 	}
