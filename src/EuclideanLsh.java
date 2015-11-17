@@ -22,13 +22,11 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class EuclideanLsh {
 	public static int	SIGNATURE_LENGTH	= 20;
 	private static int	BUCKET_WIDTH		= 20;
-	public static int	VECTOR_LENGTH;
+	public static int VECTOR_LENGTH = 60000;
 
 	public static class HashSignatureMapper extends Mapper<Object, Text, Text, NullWritable> {
 
 		private int[]		searchSig;
-		private Text		classification	= new Text();
-
 		private float[][]	hashFunction;
 
 		@Override
@@ -59,14 +57,13 @@ public class EuclideanLsh {
 			int vectStart = entry.indexOf("\t");
 			String className = entry.substring(0, vectStart);
 			String vect = entry.substring(vectStart + 1);
-			classification.set(className);
 
-			double[] inputVector = parseDoubleArr(vect.split("/"));
 			for (int i = 0; i < hashFunction.length; i++) {
-				if (hashed(inputVector, hashFunction[i]) != searchSig[i]) { return; }
+				if (hashed(vect.split("\t"), hashFunction[i]) != searchSig[i]) {
+					return;
+				}
 			}
-			classification.set("" + classification);
-			context.write(classification, NullWritable.get());
+			context.write(value, NullWritable.get());
 		}
 	}
 
@@ -80,33 +77,24 @@ public class EuclideanLsh {
 
 	}
 
-	private static double[] parseDoubleArr(String[] strArr) {
-		int len = strArr.length;
-		double[] parsedArr = new double[len];
-		for (int i = 0; i < len; i++) {
-			parsedArr[i] = Double.parseDouble(strArr[i].split(":")[1]);
-		}
-		return parsedArr;
-	}
-
-	private static int hashed(double[] vector, float[] hash) {
+	private static int hashed(String[] sparseVect, float[] hash) {
 		double scalar = 0;
-		for (int i = 0; i < hash.length; i++) {
-			scalar += vector[i] * hash[i];
+		for (int i = 0; i < sparseVect.length; i++) {
+			String[] entry = sparseVect[i].split(":");
+			int pos = Integer.parseInt(entry[0]);
+			double val = Double.parseDouble(entry[1]);
+			scalar += val * hash[pos];
 		}
 		return (int) (scalar / (BUCKET_WIDTH));
 
 	}
 
-	private static int[] calculateSignature(double[] vector, float[][] hashFunction) {
+	private static int[] calculateSignature(String[] sparseVect,
+			float[][] hashFunction) {
 		int sigLength = hashFunction.length;
 		int[] signature = new int[sigLength];
 		for (int h = 0; h < sigLength; h++) {
-			double scalar = 0;
-			for (int i = 0; i < hashFunction[h].length; i++) {
-				scalar += vector[i] * hashFunction[h][i];
-			}
-			signature[h] = (int) (scalar / (BUCKET_WIDTH));
+			signature[h] = hashed(sparseVect, hashFunction[h]);
 		}
 		return signature;
 	}
@@ -127,7 +115,7 @@ public class EuclideanLsh {
 		for (int i = 0; i < vector.length; i++) {
 			sumOfSq += vector[i];
 		}
-		float magnitude = (float) Math.sqrt((double) sumOfSq);
+		float magnitude = (float) Math.sqrt(sumOfSq);
 
 		for (int i = 0; i < vector.length; i++) {
 			vector[i] = vector[i] / magnitude;
@@ -163,16 +151,16 @@ public class EuclideanLsh {
 					case "-b":
 						BUCKET_WIDTH = Integer.parseInt(args[++i]);
 						break;
+					case "-l":
+						VECTOR_LENGTH = Integer.parseInt(args[++i]);
 				}
 			}
 		}
 
-		double[] searchVector = parseDoubleArr(searchTerm.split(","));
-		VECTOR_LENGTH = searchVector.length;
-
 		HashSet<Double[]> usedHashes = new HashSet<Double[]>();
 		float[][] hashFunction = generateRandomHash(usedHashes, SIGNATURE_LENGTH);
-		int[] searchSig = calculateSignature(searchVector, hashFunction);
+		int[] searchSig = calculateSignature(searchTerm.split("\t"),
+				hashFunction);
 		File configFile = createConfigFile(hashFunction, searchSig);
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf);
