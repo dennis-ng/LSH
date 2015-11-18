@@ -1,12 +1,11 @@
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.URI;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.HashSet;
 
 import org.apache.hadoop.conf.Configuration;
@@ -21,14 +20,13 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class EuclideanLsh {
 	public static int	SIGNATURE_LENGTH	= 20;
 	private static int	BUCKET_WIDTH		= 20;
-	public static int VECTOR_LENGTH = 60000;
+	public static int	VECTOR_LENGTH		= 60000;
+	public static int	MULTIPLIER			= 100;
 
-	public static class HashSignatureMapper extends
-	Mapper<Object, Text, Text, Text> {
+	public static class HashSignatureMapper extends Mapper<Object, Text, Text, Text> {
 
-		private int[]		searchSig;
 		private float[][]	hashFunction;
-		private Text signature = new Text();
+		private Text		signature	= new Text();
 
 		@Override
 		protected void setup(Mapper<Object, Text, Text, Text>.Context context)
@@ -40,7 +38,6 @@ public class EuclideanLsh {
 			String configFileName = filePath.getName().toString();
 			ObjectInputStream ois = new ObjectInputStream(new FileInputStream(configFileName));
 			try {
-				this.searchSig = (int[]) ois.readObject();
 				this.hashFunction = (float[][]) ois.readObject();
 			}
 			catch (ClassNotFoundException e) {
@@ -60,8 +57,7 @@ public class EuclideanLsh {
 			String vect = entry.substring(vectStart + 1);
 			StringBuilder stringHash = new StringBuilder();
 			for (int i = 0; i < hashFunction.length; i++) {
-				stringHash.append(hashed(vect.split("\t"), hashFunction[i])
-						+ ",");
+				stringHash.append(hashed(vect.split("\t"), hashFunction[i]) + ",");
 			}
 			stringHash.deleteCharAt(stringHash.length() - 1);
 			signature.set(stringHash.toString());
@@ -93,8 +89,7 @@ public class EuclideanLsh {
 
 	}
 
-	private static int[] calculateSignature(String[] sparseVect,
-			float[][] hashFunction) {
+	private static int[] calculateSignature(String[] sparseVect, float[][] hashFunction) {
 		int sigLength = hashFunction.length;
 		int[] signature = new int[sigLength];
 		for (int h = 0; h < sigLength; h++) {
@@ -107,7 +102,7 @@ public class EuclideanLsh {
 		float[][] hashes = new float[signatureLength][VECTOR_LENGTH];
 		for (int i = 0; i < signatureLength; i++) {
 			for (int j = 0; j < VECTOR_LENGTH; j++) {
-				hashes[i][j] = (float) Math.random() - 0.5f;
+				hashes[i][j] = MULTIPLIER * ((float) Math.random() - 0.5f);
 			}
 			normalize(hashes[i]);
 		}
@@ -126,11 +121,12 @@ public class EuclideanLsh {
 		}
 	}
 
-	private static File createConfigFile(float[][] hashFunction, int[] searchSig) throws IOException {
-		File configFile = File.createTempFile("searchConfig", ".tmp");
-		configFile.deleteOnExit();
+	private static File createConfigFile(float[][] hashFunction, String sigFileName) throws IOException {
+		File configFile = new File(sigFileName);
+		if (configFile.exists()) { throw new FileAlreadyExistsException(
+				"Hash function file already exist. Please use a new name."); }
+		configFile.createNewFile();
 		ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(configFile));
-		oos.writeObject(searchSig);
 		oos.writeObject(hashFunction);
 		oos.close();
 		return configFile;
@@ -140,11 +136,9 @@ public class EuclideanLsh {
 			throws IllegalArgumentException, IOException, ClassNotFoundException, InterruptedException {
 		if (args.length < 3) {
 			System.err.println(
-					"Usage : hadoop jar lsh.jar EuclideanLsh input output searchVectorFile [-s signature length] [-b bucket width]");
+					"Usage : hadoop jar lsh.jar EuclideanLsh input output save_hash_function_file [-s signature length] [-b bucket width] [-f number of features] [-m multiplier]");
 			System.exit(1);
 		}
-		BufferedReader br = new BufferedReader(new FileReader(args[2]));
-		String searchTerm = br.readLine();
 		if (args.length > 3) {
 			for (int i = 3; i < args.length; i++) {
 				switch (args[i]) {
@@ -155,21 +149,23 @@ public class EuclideanLsh {
 					case "-b":
 						BUCKET_WIDTH = Integer.parseInt(args[++i]);
 						break;
-					case "-l":
+					case "-f":
 						VECTOR_LENGTH = Integer.parseInt(args[++i]);
+						break;
+					case "-m":
+						MULTIPLIER = Integer.parseInt(args[++i]);
+						break;
 				}
 			}
 		}
 
 		HashSet<Double[]> usedHashes = new HashSet<Double[]>();
 		float[][] hashFunction = generateRandomHash(usedHashes, SIGNATURE_LENGTH);
-		int[] searchSig = calculateSignature(searchTerm.split("\t"),
-				hashFunction);
-		File configFile = createConfigFile(hashFunction, searchSig);
+		File configFile = createConfigFile(hashFunction, args[2]);
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf);
 		job.addCacheFile(configFile.toURI());
-		job.setJarByClass(CosLsh.class);
+		job.setJarByClass(EuclideanLsh.class);
 		job.setMapperClass(HashSignatureMapper.class);
 		job.setNumReduceTasks(0);
 		// job.setCombinerClass(MyReducer.class);
