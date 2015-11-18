@@ -15,7 +15,6 @@ import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
-import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
@@ -24,13 +23,15 @@ public class EuclideanLsh {
 	private static int	BUCKET_WIDTH		= 20;
 	public static int VECTOR_LENGTH = 60000;
 
-	public static class HashSignatureMapper extends Mapper<Object, Text, Text, NullWritable> {
+	public static class HashSignatureMapper extends
+	Mapper<Object, Text, Text, Text> {
 
 		private int[]		searchSig;
 		private float[][]	hashFunction;
+		private Text signature = new Text();
 
 		@Override
-		protected void setup(Mapper<Object, Text, Text, NullWritable>.Context context)
+		protected void setup(Mapper<Object, Text, Text, Text>.Context context)
 				throws IOException, InterruptedException {
 			super.setup(context);
 			Configuration conf = context.getConfiguration();
@@ -57,25 +58,28 @@ public class EuclideanLsh {
 			int vectStart = entry.indexOf("\t");
 			String className = entry.substring(0, vectStart);
 			String vect = entry.substring(vectStart + 1);
-
+			StringBuilder stringHash = new StringBuilder();
 			for (int i = 0; i < hashFunction.length; i++) {
-				if (hashed(vect.split("\t"), hashFunction[i]) != searchSig[i]) {
-					return;
-				}
+				stringHash.append(hashed(vect.split("\t"), hashFunction[i])
+						+ ",");
 			}
-			context.write(value, NullWritable.get());
+			stringHash.deleteCharAt(stringHash.length() - 1);
+			signature.set(stringHash.toString());
+			context.write(signature, value);
 		}
 	}
 
-	public static class MyReducer extends Reducer<Text, NullWritable, Text, NullWritable> {
-
-		public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
-			for (Text val : values) {
-				context.write(key, NullWritable.get());
-			}
-		}
-
-	}
+	// public static class MyReducer extends Reducer<Text, NullWritable, Text,
+	// NullWritable> {
+	//
+	// public void reduce(Text key, Iterable<Text> values, Context context)
+	// throws IOException, InterruptedException {
+	// for (Text val : values) {
+	// context.write(key, NullWritable.get());
+	// }
+	// }
+	//
+	// }
 
 	private static int hashed(String[] sparseVect, float[] hash) {
 		double scalar = 0;
@@ -167,8 +171,9 @@ public class EuclideanLsh {
 		job.addCacheFile(configFile.toURI());
 		job.setJarByClass(CosLsh.class);
 		job.setMapperClass(HashSignatureMapper.class);
-		job.setCombinerClass(MyReducer.class);
-		job.setReducerClass(MyReducer.class);
+		job.setNumReduceTasks(0);
+		// job.setCombinerClass(MyReducer.class);
+		// job.setReducerClass(MyReducer.class);
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(NullWritable.class);
 		FileInputFormat.addInputPath(job, new Path(args[0]));
