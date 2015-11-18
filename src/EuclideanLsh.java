@@ -53,7 +53,6 @@ public class EuclideanLsh {
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 			String entry = value.toString();
 			int vectStart = entry.indexOf("\t");
-			String className = entry.substring(0, vectStart);
 			String vect = entry.substring(vectStart + 1);
 			StringBuilder stringHash = new StringBuilder();
 			for (int i = 0; i < hashFunction.length; i++) {
@@ -65,18 +64,6 @@ public class EuclideanLsh {
 		}
 	}
 
-	// public static class MyReducer extends Reducer<Text, NullWritable, Text,
-	// NullWritable> {
-	//
-	// public void reduce(Text key, Iterable<Text> values, Context context)
-	// throws IOException, InterruptedException {
-	// for (Text val : values) {
-	// context.write(key, NullWritable.get());
-	// }
-	// }
-	//
-	// }
-
 	private static int hashed(String[] sparseVect, float[] hash) {
 		double scalar = 0;
 		for (int i = 0; i < sparseVect.length; i++) {
@@ -87,15 +74,6 @@ public class EuclideanLsh {
 		}
 		return (int) (scalar / (BUCKET_WIDTH));
 
-	}
-
-	private static int[] calculateSignature(String[] sparseVect, float[][] hashFunction) {
-		int sigLength = hashFunction.length;
-		int[] signature = new int[sigLength];
-		for (int h = 0; h < sigLength; h++) {
-			signature[h] = hashed(sparseVect, hashFunction[h]);
-		}
-		return signature;
 	}
 
 	private static float[][] generateRandomHash(HashSet<Double[]> usedHashes, int signatureLength) {
@@ -128,6 +106,7 @@ public class EuclideanLsh {
 		configFile.createNewFile();
 		ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(configFile));
 		oos.writeObject(hashFunction);
+		oos.writeInt(BUCKET_WIDTH);
 		oos.close();
 		return configFile;
 	}
@@ -168,8 +147,6 @@ public class EuclideanLsh {
 		job.setJarByClass(EuclideanLsh.class);
 		job.setMapperClass(HashSignatureMapper.class);
 		job.setNumReduceTasks(0);
-		// job.setCombinerClass(MyReducer.class);
-		// job.setReducerClass(MyReducer.class);
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(NullWritable.class);
 		FileInputFormat.addInputPath(job, new Path(args[0]));
