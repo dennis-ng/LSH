@@ -20,8 +20,8 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 public class EuclideanLsh {
 	public static int	SIGNATURE_LENGTH	= 20;
 	private static int	BUCKET_WIDTH		= 20;
-	public static int	VECTOR_LENGTH		= 60000;
-	public static int	MULTIPLIER			= 100;
+	public static int VECTOR_LENGTH = 61236;
+	public static int MULTIPLIER = 100;
 
 	public static class HashSignatureMapper extends Mapper<Object, Text, Text, Text> {
 
@@ -65,12 +65,15 @@ public class EuclideanLsh {
 	}
 
 	private static int hashed(String[] sparseVect, float[] hash) {
+		String[] entry;
 		double scalar = 0;
+		int pos;
+		double val;
 		for (int i = 0; i < sparseVect.length; i++) {
-			String[] entry = sparseVect[i].split(":");
-			int pos = Integer.parseInt(entry[0]);
-			double val = Double.parseDouble(entry[1]);
-			scalar += val * hash[pos];
+			entry = sparseVect[i].split(":");
+			pos = Integer.parseInt(entry[0]);
+			val = Double.parseDouble(entry[1]);
+			scalar += val * hash[pos - 1]; // index starts from 1
 		}
 		return (int) (scalar / (BUCKET_WIDTH));
 
@@ -80,9 +83,12 @@ public class EuclideanLsh {
 		float[][] hashes = new float[signatureLength][VECTOR_LENGTH];
 		for (int i = 0; i < signatureLength; i++) {
 			for (int j = 0; j < VECTOR_LENGTH; j++) {
-				hashes[i][j] = MULTIPLIER * ((float) Math.random() - 0.5f);
+				hashes[i][j] = ((float) Math.random() - 0.5f);
 			}
 			normalize(hashes[i]);
+			for (int j = 0; j < VECTOR_LENGTH; j++) {
+				hashes[i][j] *= MULTIPLIER;
+			}
 		}
 		return hashes;
 	}
