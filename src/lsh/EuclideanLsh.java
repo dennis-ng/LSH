@@ -16,6 +16,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 
 public class EuclideanLsh {
@@ -52,6 +53,9 @@ public class EuclideanLsh {
 
 		@Override
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+			Text fileName = new Text();
+			fileName.set(((FileSplit) context.getInputSplit()).getPath()
+					.getName());
 			String entry = value.toString();
 			int vectStart = entry.indexOf("\t");
 			String vect = entry.substring(vectStart + 1);
@@ -61,7 +65,7 @@ public class EuclideanLsh {
 			}
 			stringHash.deleteCharAt(stringHash.length() - 1);
 			signature.set(stringHash.toString());
-			context.write(signature, value);
+			context.write(signature, fileName);
 		}
 	}
 
@@ -148,6 +152,7 @@ public class EuclideanLsh {
 		HashSet<Double[]> usedHashes = new HashSet<Double[]>();
 		float[][] hashFunction = generateRandomHash(usedHashes, SIGNATURE_LENGTH);
 		File configFile = createConfigFile(hashFunction, args[2]);
+		hashFunction = null;
 		Configuration conf = new Configuration();
 		Job job = Job.getInstance(conf);
 		job.addCacheFile(configFile.toURI());
