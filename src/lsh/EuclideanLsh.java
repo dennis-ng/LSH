@@ -1,3 +1,4 @@
+package lsh;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -21,7 +22,7 @@ public class EuclideanLsh {
 	public static int	SIGNATURE_LENGTH	= 20;
 	private static int	BUCKET_WIDTH		= 20;
 	public static int VECTOR_LENGTH = 61236;
-	public static int MULTIPLIER = 100;
+	public static int MULTIPLIER = 10;
 
 	public static class HashSignatureMapper extends Mapper<Object, Text, Text, Text> {
 
